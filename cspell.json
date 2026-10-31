@@ -41,7 +41,15 @@
         "LSPM",
         "usbaudio",
         "usbhub",
-        "UBR"
+        "UBR",
+        "PKEY",
+        "DRYRUN",
+        "LASTEXITCODE",
+        "NTSTATUS",
+        "logman",
+        "UCX",
+        "APOs",
+        "mutex"
     ],
     // Generated output and editor config are not spell-checked
     "ignorePaths": [

@@ -1,11 +1,31 @@
-// VS Code debug configurations for the PowerShell extension (this file allows comments).
-// Pick one from the Run and Debug panel (F5) to launch the diagnostic script.
-// Note: -Fix and -RestoreFrom relaunch themselves in an elevated window if needed.
+// =============================================================================
+// VS Code "Run and Debug" configurations for Diagnose-FiiOK7.ps1
+// =============================================================================
+// HOW TO USE (for beginners)
+//   1. Install the "PowerShell" extension in VS Code (publisher: Microsoft).
+//   2. Open the Run and Debug panel (Ctrl+Shift+D).
+//   3. Pick a configuration from the drop-down at the top, then press F5.
+//
+// Each entry below runs the same script with different options ("args").
+// The safest place to start is "K7: report" - it only reads, never changes.
+//
+// ADMINISTRATOR RIGHTS
+//   Modes that change settings (-Fix, -RestoreFrom) or record a USB trace (-Trace)
+//   need administrator rights. If VS Code is not running as administrator, the
+//   script opens a NEW elevated PowerShell window (Windows will ask permission)
+//   and the run continues there, not in the VS Code terminal.
+//
+// IF F5 SHOWS "connect ENOENT \\.\pipe\PSES_..."
+//   That is the PowerShell extension's background process, not this script.
+//   Run "PowerShell: Restart Session" from the Command Palette (Ctrl+Shift+P).
+//
+// This file allows // comments because VS Code reads it as "JSON with Comments".
+// =============================================================================
 {
     "version": "0.2.0",
     "configurations": [
         {
-            // Default read-only report: changes nothing on the system
+            // Read-only report: checks everything, changes nothing. Start here.
             "name": "K7: report",
             "type": "PowerShell",
             "request": "launch",
@@ -13,7 +33,7 @@
             "args": []
         },
         {
-            // Live capture: prompts you to switch the K7 on, then records what Windows sees
+            // Live capture: asks you to switch the K7 on, then records what Windows sees
             "name": "K7: live capture (-Watch)",
             "type": "PowerShell",
             "request": "launch",
@@ -21,7 +41,25 @@
             "args": ["-Watch"]
         },
         {
-            // Report, then offers each fix with a Y/N prompt (a backup is saved first)
+            // Live capture plus a low-level USB trace (.etl file). Needs administrator.
+            // Best evidence for FiiO support when the K7 fails to appear.
+            "name": "K7: live capture + USB trace (-Watch -Trace)",
+            "type": "PowerShell",
+            "request": "launch",
+            "script": "${workspaceFolder}/Diagnose-FiiOK7.ps1",
+            "args": ["-Watch", "-Trace"]
+        },
+        {
+            // Preview of -Fix: shows every change it WOULD make, but changes nothing
+            "name": "K7: preview fixes (-Fix -DryRun)",
+            "type": "PowerShell",
+            "request": "launch",
+            "script": "${workspaceFolder}/Diagnose-FiiOK7.ps1",
+            "args": ["-Fix", "-DryRun"]
+        },
+        {
+            // Report, then offers each fix with a Y/N prompt. Makes a backup and a
+            // System Restore point before the first change. Needs administrator.
             "name": "K7: apply fixes (-Fix)",
             "type": "PowerShell",
             "request": "launch",

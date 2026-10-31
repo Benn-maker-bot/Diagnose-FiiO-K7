@@ -1,7 +1,14 @@
-# Generated diagnostic output: reports, transcripts and -Fix backups.
-# These contain machine-specific details (user name, hardware, device IDs),
-# so they are kept out of the repository.
+# .gitignore lists files and folders that Git should NOT track or upload.
+# Each line is a pattern; lines starting with # are comments.
+
+# Generated diagnostic output. Every run writes here:
+#   *.txt  - report (transcript of the screen output)
+#   *.log  - detailed timestamped log of every check, command and change
+#   *.json - backups made by -Fix (needed by -RestoreFrom to undo changes)
+#   *.etl  - raw USB traces made by -Trace (can be several MB)
+# These contain machine-specific details (user name, computer name, hardware and
+# device IDs), so they are kept out of the repository for privacy.
 reports/
 
-# Local VS Code AI assistant rules (not part of the project)
+# Local VS Code AI assistant rules (personal editor setup, not part of the project)
 .github\instructions\codacy.instructions.md
