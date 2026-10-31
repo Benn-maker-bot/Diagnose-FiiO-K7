@@ -1787,7 +1787,10 @@ try {
             try { if (Test-Path -LiteralPath "$base\FxProperties") { $fxCount = @((Get-Item -LiteralPath "$base\FxProperties").GetValueNames()).Count } } catch { }
             $enhOff   = Get-RegDword "$base\Properties" $PKEY_DisableEnhancements
             $exclAllow = Get-RegDword "$base\Properties" $PKEY_ExclusiveAllow
-            Write-Detail "$($e.FriendlyName): effect-processing entries=$fxCount, enhancements $(if ($enhOff -eq 1) { 'OFF' } else { 'not disabled' }), exclusive mode $(if ($exclAllow -eq 0) { 'blocked' } else { 'allowed' })"
+            $exclPriority = Get-RegDword "$base\Properties" $PKEY_ExclusivePriority
+            # Absent values mean the Windows default: exclusive mode allowed, with priority
+            $exclText  = if ($exclAllow -eq 0) { 'blocked' } elseif ($exclPriority -eq 0) { 'allowed, without priority' } else { 'allowed, with priority' }
+            Write-Detail "$($e.FriendlyName): effect-processing entries=$fxCount, enhancements $(if ($enhOff -eq 1) { 'OFF' } else { 'not disabled' }), exclusive mode $exclText"
             if ($fxCount -gt 0 -and $enhOff -ne 1) {
                 Write-Finding Info 'Audio' "Audio enhancement processing is registered on '$($e.FriendlyName)' and not switched off." `
                     'As a test, turn it off: Settings > System > Sound > (K7 output) > Audio enhancements: Off. The script does not change this itself.'
