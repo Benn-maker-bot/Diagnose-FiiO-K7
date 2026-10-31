@@ -61,17 +61,27 @@
 #>
 [CmdletBinding()]
 param(
+    # Live capture mode: record what Windows sees while the K7 is switched on
     [switch]$Watch,
+    # Length of the live capture, in seconds
     [ValidateRange(15, 600)]
     [int]$WatchSeconds = 60,
+    # Offer to apply fixes (each one is confirmed individually and backed up first)
     [switch]$Fix,
+    # Skip the Y/N prompts and apply every fix (only meaningful with -Fix)
     [switch]$Force,
+    # How many days of event log history to search
     [ValidateRange(1, 90)]
     [int]$Days = 14,
+    # Path to a backup JSON created by -Fix; reverts the changes it recorded
     [string]$RestoreFrom,
+    # Where reports and backups are written (defaults to a "reports" folder beside the script)
     [string]$OutputFolder = (Join-Path $PSScriptRoot 'reports')
 )
 
+# Strict mode turns use of unset variables into errors, which catches typos early.
+# 'Continue' keeps the script running when a single query fails: a diagnostic tool
+# should report as much as it can rather than stop at the first problem.
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Continue'
 
@@ -80,13 +90,17 @@ $ErrorActionPreference = 'Continue'
 # ---------------------------------------------------------------------------
 # FiiO's USB vendor ID is 0x2972. XMOS (the K7's USB receiver chip) is 0x20B1;
 # a K7 in firmware-update (DFU) mode or with generic firmware can show that ID.
-$K7IdPattern      = 'VID_(2972|20B1)'
-$K7NamePattern    = 'FiiO'
-$K7RootPattern    = '^USB\\VID_(2972|20B1)&PID_[0-9A-F]{4}\\'
-$UnknownPattern   = 'VID_0000|Unknown USB Device|Device Descriptor Request Failed|Port Reset Failed|Set Address Failed'
-$AudioSwPattern   = 'SonicStudio|Sonic Studio|ArmouryCrate|Armoury Crate|Nahimic|Voicemeeter|VB-Audio|SteelSeries|Sonar|FxSound|EqualizerAPO|Equalizer APO|Peace Equalizer|\bDTS\b|Dolby|Boom3D|Realtek Audio Console|RtkAudUService|Waves MaxxAudio|MaxxAudio|SoundSwitch|Wave Link|NVIDIA Broadcast|Krisp'
+$K7IdPattern      = 'VID_(2972|20B1)'                              # matches any instance ID or event text naming the K7's vendor
+$K7NamePattern    = 'FiiO'                                         # fallback: match on the friendly name
+$K7RootPattern    = '^USB\\VID_(2972|20B1)&PID_[0-9A-F]{4}\\'      # the top-level USB device node (not its audio child nodes)
+# Strings that indicate a failed enumeration (the device attached but never described itself)
+$UnknownPattern   ='VID_0000|Unknown USB Device|Device Descriptor Request Failed|Port Reset Failed|Set Address Failed'
+# Third-party audio utilities that insert themselves into the Windows audio stack
+# and have been known to interfere with USB audio devices
+$AudioSwPattern   ='SonicStudio|Sonic Studio|ArmouryCrate|Armoury Crate|Nahimic|Voicemeeter|VB-Audio|SteelSeries|Sonar|FxSound|EqualizerAPO|Equalizer APO|Peace Equalizer|\bDTS\b|Dolby|Boom3D|Realtek Audio Console|RtkAudUService|Waves MaxxAudio|MaxxAudio|SoundSwitch|Wave Link|NVIDIA Broadcast|Krisp'
 
-$GUID_SUB_USB     = '2a737441-1930-4402-8d77-b2bebba308a3'
+# Power-setting GUIDs used with powercfg.exe (a "sub" is the setting group, the other is the setting)
+$GUID_SUB_USB     ='2a737441-1930-4402-8d77-b2bebba308a3'
 $GUID_USB_SS      = '48e6b7a6-50f5-4782-a5d4-53bb8f07e226'   # USB selective suspend
 $GUID_SUB_PCIE    = '501a4d13-42af-4429-9fd1-a8218c268e20'
 $GUID_PCIE_LSPM   = 'ee12f906-d277-404b-b6da-e5fa1a576df5'   # PCIe Link State Power Management
@@ -99,6 +113,7 @@ $KnownIssueKBs = @{
     'KB5127648' = 'October 2026 update - USB audio Code 10 still listed as an open (mitigated) issue'
 }
 
+# Device Manager problem codes (ConfigManagerErrorCode) translated to plain English
 $ProblemText = @{
     0  = 'Working'
     1  = 'Not configured correctly'
@@ -127,6 +142,10 @@ $ProblemText = @{
 # ---------------------------------------------------------------------------
 # Elevation
 # ---------------------------------------------------------------------------
+# Fixing or restoring changes system settings, so it needs administrator rights.
+# If we are not elevated, relaunch this same script (with the same parameters) in an
+# elevated window and end this instance. A plain read-only report runs un-elevated,
+# though with less detail (event logs and device power flags need admin).
 $IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)
 
@@ -151,6 +170,8 @@ if (($Fix -or $RestoreFrom) -and -not $IsAdmin) {
 # ---------------------------------------------------------------------------
 # Output helpers
 # ---------------------------------------------------------------------------
+# Every run gets a timestamped report (and, with -Fix, a matching backup file).
+# If the output folder cannot be created, fall back to the temp folder.
 $Stamp      = Get-Date -Format 'yyyyMMdd-HHmmss'
 if (-not (Test-Path -LiteralPath $OutputFolder)) {
     try { New-Item -ItemType Directory -Path $OutputFolder -Force -ErrorAction Stop | Out-Null }
@@ -158,8 +179,11 @@ if (-not (Test-Path -LiteralPath $OutputFolder)) {
 }
 $ReportPath = Join-Path $OutputFolder "FiiO-K7-Report-$Stamp.txt"
 $BackupPath = Join-Path $OutputFolder "FiiO-K7-Backup-$Stamp.json"
+# Every finding is collected here so the end of the run can summarise them and
+# decide whether to suggest -Fix.
 $Findings   = New-Object System.Collections.Generic.List[object]
 
+# Prints a cyan banner that starts a numbered section of the report
 function Write-Section {
     param([string]$Title)
     Write-Host ''
@@ -168,6 +192,8 @@ function Write-Section {
     Write-Host ('=' * 78) -ForegroundColor Cyan
 }
 
+# Records and prints one finding. Level: OK (good), Info (neutral), Warn (worth
+# looking at) or Fault (a definite problem). Advice is the suggested next step.
 function Write-Finding {
     param(
         [ValidateSet('OK', 'Info', 'Warn', 'Fault')][string]$Level,
@@ -186,6 +212,7 @@ function Write-Detail {
     Write-Host "          $Text" -ForegroundColor DarkGray
 }
 
+# Asks a Y/N question; -Force answers yes automatically
 function Confirm-Step {
     param([string]$Question)
     if ($Force) { return $true }
@@ -202,6 +229,7 @@ function Get-ProblemText {
 # ---------------------------------------------------------------------------
 # Device helpers
 # ---------------------------------------------------------------------------
+# Device properties fetched for each K7 / Unknown USB device instance
 $DevKeys = @(
     'DEVPKEY_Device_ProblemCode', 'DEVPKEY_Device_Service', 'DEVPKEY_Device_DriverVersion',
     'DEVPKEY_Device_DriverProvider', 'DEVPKEY_Device_DriverInfPath', 'DEVPKEY_Device_DriverDate',
@@ -210,6 +238,8 @@ $DevKeys = @(
     'DEVPKEY_Device_ContainerId'
 )
 
+# Returns a hashtable of the DEVPKEY_* properties above for one device instance.
+# Properties a device does not have are simply absent.
 function Get-DevProps {
     param([string]$InstanceId)
     $h = @{}
@@ -221,12 +251,16 @@ function Get-DevProps {
     return $h
 }
 
+# Safe hashtable lookup: returns $null instead of erroring under strict mode
 function Get-PropValue {
     param([hashtable]$Props, [string]$Key)
     if ($Props.ContainsKey($Key)) { return $Props[$Key] }
     return $null
 }
 
+# Walks up the device tree from the K7 (device -> hub -> root hub -> controller ...)
+# and returns each parent. Used to spot external hubs between the K7 and the PC.
+# Capped at 12 levels as a guard against loops.
 function Get-ParentChain {
     param([string]$InstanceId)
     $chain = New-Object System.Collections.Generic.List[object]
@@ -267,6 +301,8 @@ function Get-EventText {
     return "$msg $xml"
 }
 
+# Reads one power-plan setting's current AC (mains) and DC (battery) value by
+# parsing the text output of "powercfg /query". Values are null if unreadable.
 function Get-PowerSetting {
     param([string]$Sub, [string]$Setting)
     $out = & powercfg.exe /query SCHEME_CURRENT $Sub $Setting 2>$null
@@ -280,6 +316,7 @@ function Get-PowerSetting {
     return $result
 }
 
+# Name of the active power plan, e.g. "Balanced"
 function Get-ActiveSchemeName {
     $line = & powercfg.exe /getactivescheme 2>$null
     $m = [regex]::Match(($line -join ' '), '\(([^)]+)\)\s*$')
@@ -287,6 +324,7 @@ function Get-ActiveSchemeName {
     return $null
 }
 
+# GUID of the active power plan (needed so backups restore to the right plan)
 function Get-ActiveSchemeGuid {
     $line = & powercfg.exe /getactivescheme 2>$null
     $m = [regex]::Match(($line -join ' '), '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
@@ -294,11 +332,14 @@ function Get-ActiveSchemeGuid {
     return $null
 }
 
+# Returns the WMI records behind Device Manager's "Allow the computer to turn off
+# this device to save power" checkbox. Empty if not elevated.
 function Get-MSPowerEntries {
     try { return @(Get-CimInstance -Namespace 'root\wmi' -ClassName 'MSPower_DeviceEnable' -ErrorAction Stop) }
     catch { return @() }
 }
 
+# Finds the power record for a device (record names start with the instance ID)
 function Find-MSPowerEntry {
     param([object[]]$Entries, [string]$InstanceId)
     foreach ($e in $Entries) {
@@ -307,6 +348,7 @@ function Find-MSPowerEntry {
     return $null
 }
 
+# Collapses whitespace and truncates long event messages so they fit on one line
 function Get-ShortMessage {
     param([string]$Message, [int]$Max = 220)
     if (-not $Message) { return '' }
@@ -318,6 +360,9 @@ function Get-ShortMessage {
 # ---------------------------------------------------------------------------
 # Restore mode
 # ---------------------------------------------------------------------------
+# Reads a backup JSON written by -Fix and puts back the original values:
+# power-plan settings, registry values (deleting any that did not exist before)
+# and the per-device "allow turn off" flags. Then exits without running diagnostics.
 if ($RestoreFrom) {
     Start-Transcript -LiteralPath $ReportPath -Force | Out-Null
     Write-Section 'Restoring settings from backup'
@@ -376,7 +421,9 @@ if (-not $IsAdmin) {
     Write-Host 'Re-run from an elevated PowerShell for the full picture.' -ForegroundColor Yellow
 }
 
-# Cache device lists once
+# Cache device lists once: enumerating devices is slow, so every section below
+# reuses these. $AllDevices includes phantom (disconnected) devices; $PresentIds
+# is the set of instance IDs that are connected right now.
 Write-Host ''
 Write-Host 'Enumerating devices (this can take a few seconds)...' -ForegroundColor DarkGray
 $AllDevices = @(Get-PnpDevice -ErrorAction SilentlyContinue)
@@ -386,6 +433,8 @@ foreach ($d in @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue)) { [v
 # ---------------------------------------------------------------------------
 # 1. System
 # ---------------------------------------------------------------------------
+# Establish the Windows build, any Insider channel, motherboard/BIOS and recent
+# updates, so the report can be matched against Microsoft's known USB audio issue.
 Write-Section '1. Windows and hardware'
 $cv      = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
 $Build   = [int]$cv.CurrentBuildNumber
@@ -424,6 +473,11 @@ Write-Detail ('Latest updates: ' + (($hotfixes | Select-Object -First 5 | ForEac
 # ---------------------------------------------------------------------------
 # 2. K7 devices
 # ---------------------------------------------------------------------------
+# Find every device node belonging to the K7 (present or phantom), show its driver
+# and health, and work out which USB Audio Class driver it is running on:
+#   UAC1 = usbaudio.sys (Microsoft, affected by the known issue)
+#   UAC2 = usbaudio2.sys (Microsoft)
+#   Vendor = FiiO's own Thesycon-based driver
 Write-Section '2. FiiO K7 device instances'
 $K7All = @($AllDevices | Where-Object { $_.InstanceId -match $K7IdPattern -or ($_.FriendlyName -and $_.FriendlyName -match $K7NamePattern) })
 $K7Roots = @($K7All | Where-Object { $_.InstanceId -match $K7RootPattern })
@@ -520,6 +574,9 @@ elseif ($AffectedBuild -and $K7Mode) {
 # ---------------------------------------------------------------------------
 # 3. Failed enumerations
 # ---------------------------------------------------------------------------
+# When a USB device attaches but fails to describe itself, Windows keeps an
+# "Unknown USB Device" entry (VID_0000). Finding these means the problem is at
+# the USB link level rather than a driver failure.
 Write-Section '3. Failed USB enumerations ("Unknown USB Device")'
 $Unknown = @($AllDevices | Where-Object { $_.InstanceId -match 'VID_0000' -or ($_.FriendlyName -and $_.FriendlyName -match $UnknownPattern) })
 $UnknownPresent = @($Unknown | Where-Object { $PresentIds.Contains($_.InstanceId) })
@@ -544,6 +601,9 @@ else {
 # ---------------------------------------------------------------------------
 # 4. USB path
 # ---------------------------------------------------------------------------
+# Trace the K7 up through its hubs to the host controller. A hub that is a separate
+# device (front panel, dock, monitor) is a common cause of flaky enumeration; a hub
+# built into the motherboard is normal. Built-in devices carry a special container ID.
 Write-Section '4. USB path from the K7 to the controller'
 $UsbControllers = @($AllDevices | Where-Object { $PresentIds.Contains($_.InstanceId) -and $_.Class -eq 'USB' -and $_.FriendlyName -match 'Host Controller|xHCI|eXtensible' })
 foreach ($c in $UsbControllers) {
@@ -609,6 +669,9 @@ else {
 # ---------------------------------------------------------------------------
 # 5. Power management
 # ---------------------------------------------------------------------------
+# Windows power saving can suspend USB ports or hubs and leave a device that
+# attaches at the wrong moment unanswered. Check the power plan, Fast Startup and
+# the per-device "turn off to save power" flags on the K7's path.
 Write-Section '5. Power management'
 $SchemeGuid = Get-ActiveSchemeGuid
 $SchemeName = Get-ActiveSchemeName
@@ -694,6 +757,10 @@ foreach ($r in $K7Roots) {
 # ---------------------------------------------------------------------------
 # 6. Event logs
 # ---------------------------------------------------------------------------
+# Search the Kernel-PnP and System logs for the K7 or Unknown USB Devices.
+# Event 411 = a device driver failed to start. Event 400/410 = device configured/started.
+# If the K7 clearly arrived but no events exist, the log is "blind" (not elevated or
+# disabled), and the absence of failures cannot be trusted.
 Write-Section "6. Event logs (last $Days days)"
 $Since = (Get-Date).AddDays(-$Days)
 $PnpEvents = @()
@@ -748,12 +815,18 @@ if ($EventLogBlind) {
         'The Kernel-PnP log is not capturing this device (not elevated, log cleared or disabled), so "no events" does not prove Windows saw nothing.'
 }
 
+# Get-WinEvent fails the whole query if ANY listed provider is not registered on this
+# PC (e.g. "usbhub"), so keep only the providers that actually exist.
 $SysEvents = @()
-try {
-    $SysEvents = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; StartTime = $Since; ProviderName = @('Microsoft-Windows-Kernel-PnP', 'Microsoft-Windows-UserPnp', 'Microsoft-Windows-USB-USBHUB3', 'usbhub', 'usbhub3', 'Microsoft-Windows-USB-USBXHCI') } -ErrorAction Stop |
-        Where-Object { (Get-EventText $_) -match $K7IdPattern -or (Get-EventText $_) -match 'VID_0000' -or (Get-EventText $_) -match 'FiiO' })
+$wantedProviders = 'Microsoft-Windows-Kernel-PnP', 'Microsoft-Windows-UserPnp', 'Microsoft-Windows-USB-USBHUB3', 'usbhub', 'usbhub3', 'Microsoft-Windows-USB-USBXHCI'
+$sysProviders = @($wantedProviders | Where-Object { Get-WinEvent -ListProvider $_ -ErrorAction SilentlyContinue })
+if ($sysProviders.Count -gt 0) {
+    try {
+        $SysEvents = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; StartTime = $Since; ProviderName = $sysProviders } -ErrorAction Stop |
+            Where-Object { (Get-EventText $_) -match $K7IdPattern -or (Get-EventText $_) -match 'VID_0000' -or (Get-EventText $_) -match 'FiiO' })
+    }
+    catch { }
 }
-catch { }
 if ($SysEvents.Count -gt 0) {
     Write-Detail "System log entries mentioning the K7 or unknown USB devices: $($SysEvents.Count)"
     foreach ($ev in ($SysEvents | Select-Object -First 10)) {
@@ -764,6 +837,9 @@ if ($SysEvents.Count -gt 0) {
 # ---------------------------------------------------------------------------
 # 7. Drivers, audio stack and audio software
 # ---------------------------------------------------------------------------
+# List FiiO driver packages in the driver store (via pnputil), confirm the Windows
+# audio services are running, check that the K7 produced an audio endpoint, and
+# flag any audio enhancement software that could interfere.
 Write-Section '7. Drivers, audio services and audio software'
 $pnpDrivers = & pnputil.exe /enum-drivers 2>$null
 $FiioPackages = @()
@@ -827,6 +903,9 @@ if ($swHits.Count -gt 0) {
 # ---------------------------------------------------------------------------
 # 8. Live capture
 # ---------------------------------------------------------------------------
+# With -Watch, subscribe to WMI device create/delete/modify events, let the user
+# switch the K7 on, and log everything Windows reports for the capture window.
+# The result is classified A-D (see the .DESCRIPTION at the top of the script).
 $Capture = $null
 if (-not $Watch) {
     Write-Section '8. Live capture'
@@ -902,6 +981,9 @@ if ($Watch) {
                    @($capPnp | Where-Object { (Get-EventText $_) -match 'VID_0000' })
     $k7Failed    = @($capPnp | Where-Object { $_.Id -eq 411 -and (Get-EventText $_) -match $K7IdPattern })
 
+    # Classify the attempt. Order matters: the most specific, Windows-side outcomes are
+    # tested first and "nothing attached at all" (A) is only concluded when no USB
+    # activity of any kind was seen.
     $verdict = $null
     if ($nowK7.Count -gt 0 -and $nowK7Bad.Count -eq 0 -and $nowEndpoints.Count -gt 0) {
         $verdict = 'OK'
@@ -940,6 +1022,8 @@ if ($Watch) {
 # ---------------------------------------------------------------------------
 # 9. Verdict
 # ---------------------------------------------------------------------------
+# Combine the live capture result (if any) with the evidence from sections 2-6 into
+# a plain-language conclusion: Windows side, USB link side, or most likely hardware.
 Write-Section '9. Verdict'
 $WindowsSide = ($K7StartFailures.Count -gt 0) -or ($null -ne $K7PresentError) -or ($AffectedBuild -and $K7Mode -eq 'UAC1' -and $K7PresentError -eq 10)
 $LinkSide    = ($UnknownEvents.Count -gt 0) -or ($Unknown.Count -gt 0)
@@ -986,6 +1070,9 @@ Write-Host ('  Findings - ' + ($counts -join ', ')) -ForegroundColor Gray
 # ---------------------------------------------------------------------------
 # 10. Fixes
 # ---------------------------------------------------------------------------
+# Only runs with -Fix. Every change is confirmed first and its previous value is
+# written to the backup JSON so -RestoreFrom can undo it. Nothing here touches
+# firmware, drivers or Windows updates.
 if ($Fix) {
     Write-Section '10. Fixes'
     Write-Host "  Each change is recorded in $BackupPath so -RestoreFrom can undo it." -ForegroundColor Gray
@@ -997,10 +1084,12 @@ if ($Fix) {
         MSPower    = New-Object System.Collections.Generic.List[object]
     }
 
+    # Writes the backup to disk after every change so a crash mid-run loses nothing
     function Save-Backup {
         $Backup | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $BackupPath -Encoding UTF8
     }
 
+    # Sets a registry DWORD, first recording its old value (or that it did not exist)
     function Set-RegDwordWithBackup {
         param([string]$Path, [string]$Name, [int]$Value)
         if (-not (Test-Path -LiteralPath $Path)) { return $false }

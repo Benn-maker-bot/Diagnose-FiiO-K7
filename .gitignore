@@ -1,7 +1,7 @@
-
-
-#Generated diagnostic output
+# Generated diagnostic output: reports, transcripts and -Fix backups.
+# These contain machine-specific details (user name, hardware, device IDs),
+# so they are kept out of the repository.
 reports/
 
-#Ignore vscode AI rules
+# Local VS Code AI assistant rules (not part of the project)
 .github\instructions\codacy.instructions.md

@@ -1,7 +1,11 @@
+// VS Code debug configurations for the PowerShell extension (this file allows comments).
+// Pick one from the Run and Debug panel (F5) to launch the diagnostic script.
+// Note: -Fix and -RestoreFrom relaunch themselves in an elevated window if needed.
 {
     "version": "0.2.0",
     "configurations": [
         {
+            // Default read-only report: changes nothing on the system
             "name": "K7: report",
             "type": "PowerShell",
             "request": "launch",
@@ -9,6 +13,7 @@
             "args": []
         },
         {
+            // Live capture: prompts you to switch the K7 on, then records what Windows sees
             "name": "K7: live capture (-Watch)",
             "type": "PowerShell",
             "request": "launch",
@@ -16,6 +21,7 @@
             "args": ["-Watch"]
         },
         {
+            // Report, then offers each fix with a Y/N prompt (a backup is saved first)
             "name": "K7: apply fixes (-Fix)",
             "type": "PowerShell",
             "request": "launch",

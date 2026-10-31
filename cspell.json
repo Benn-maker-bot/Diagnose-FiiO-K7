@@ -1,6 +1,10 @@
+// Spell-checker settings (cSpell VS Code extension). Comments are allowed in this file.
 {
     "version": "0.2",
+    // British and general English
     "language": "en,en-GB",
+    // Technical terms, product names and PowerShell/Windows command names
+    // that the script uses and the dictionary would otherwise flag
     "words": [
         "pscustomobject",
         "getactivescheme",
@@ -39,6 +43,7 @@
         "usbhub",
         "UBR"
     ],
+    // Generated output and editor config are not spell-checked
     "ignorePaths": [
         "FiiO-K7-Report-*.txt",
         "FiiO-K7-Backup-*.json",
