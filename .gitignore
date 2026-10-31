@@ -1,0 +1,7 @@
+
+
+#Generated diagnostic output
+reports/
+
+#Ignore vscode AI rules
+.github\instructions\codacy.instructions.md

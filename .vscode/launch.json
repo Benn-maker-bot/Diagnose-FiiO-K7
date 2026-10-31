@@ -1,0 +1,26 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "K7: report",
+            "type": "PowerShell",
+            "request": "launch",
+            "script": "${workspaceFolder}/Diagnose-FiiOK7.ps1",
+            "args": []
+        },
+        {
+            "name": "K7: live capture (-Watch)",
+            "type": "PowerShell",
+            "request": "launch",
+            "script": "${workspaceFolder}/Diagnose-FiiOK7.ps1",
+            "args": ["-Watch"]
+        },
+        {
+            "name": "K7: apply fixes (-Fix)",
+            "type": "PowerShell",
+            "request": "launch",
+            "script": "${workspaceFolder}/Diagnose-FiiOK7.ps1",
+            "args": ["-Fix"]
+        }
+    ]
+}
